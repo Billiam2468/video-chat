@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Chat</title>
+    <style>
+        #appointments {
+            width: 30%;
+            height: 800px;
+            width: 600px;
+            float: left;
+            border: 2px black;
+            border-style: solid;
+            visibility: hidden;
+        }
+
+        #appointmentMaker {
+            width: 100%;
+            border: 2px black;
+            border-style: solid;
+            display: none;
+        }
+
+        #videos {
+            border: 2px black;
+            border-style: solid;
+            width: 1000px;
+            height: 360px;
+            float: left;
+            /* visibility: hidden; */
+            margin-left: 5%;
+        }
+
+        #chatBox {
+            border: 2px black;
+            border-style: solid;
+            width: 1000px;
+            height: 300px;
+            float: left;
+            margin-left: 5%;
+            overflow-y: scroll;
+        }
+
+        #chatInput {
+            border: 2px black;
+            border-style: solid;
+            width: 1000px;
+            height: 30px;
+            float: left;
+            margin-left: 5%;
+        }
+
+        #videoInterface {
+            visibility: hidden;
+            float: left;
+            width: 1000px;
+            margin-left: 60px;
+        }
+
+        h1 {
+            border: 2px black;
+            border-style: solid;
+        }
+
+        .scrolling {
+            overflow-y: scroll;
+            height: 35%;
+        }
+
+        .controls {
+            text-align: center;
+            margin-left: 30%;
+        }
+
+        table {
+            border-collapse: collapse;
+        }
+
+        tr {
+            border: 2px black;
+            border-style: solid;
+            width: 100%;
+        }
+
+        td {
+            border: 1px black;
+            border-style: solid;
+            font-size: 20px;
+            text-align: center;
+        }
+
+        h2, h3, h4 {
+            display:inline;
+        }
+
+        video {
+            width: 47%;
+            margin-right: 3%;
+        }
+    </style>
+</head>
+<body>
+    <!-- Node Express and Vue.js Setup from here https://www.youtube.com/watch?v=To5y2WLsKIw -->
+    <div id = "app">
+        Username: <input type="text" id="usernameRegister">
+        Password: <input type="text" id="passwordRegister">
+        Client<input type="radio" name="employee" id="no" checked>
+        Employee<input type="radio" name="employee" id="yes">
+        <button v-on:click = "register">Register</button> <br> <br>
+
+        Username: <input type="text" id="usernameLogin">
+        Password: <input type="text" id="passwordLogin">
+        <button v-on:click = "login">Login</button> 
+        <button v-on:click = "logout">Logout</button> <br> <br> <br>
+        
+        <div id = "appointments">
+            <h2><ins>User logged in: </ins>{{ username }} </h2> <h3 v-if="employee">&nbsp;(Employee)</h3> <h3 v-else>&nbsp;(Client)</h3>
+            <div id = "appointmentMaker">
+                <input type="datetime-local" id = "datePicker">
+                <select id="timeSelected">
+                    <option value="15">15m</option>
+                    <option value="30">30m</option>
+                    <option value="45">45m</option>
+                    <option value="60">60m</option>
+                </select>
+                <button v-on:click = "makeAppointment">Schedule Appointment</button>
+            </div>
+
+            <h1>Pending Appointments</h1>
+            <div id = "appointmentsPending" class = "scrolling">
+                <table id = "pendingTable">
+                </table>
+            </div>
+
+            <h1>Upcoming Appointments</h1>
+            <div id = "appointmentsUpcoming" class = "scrolling">
+                <table id = "upcomingTable">
+                </table>
+            </div>
+        </div>
+        
+        <div id = "videoInterface">
+            <div id = "videos"></div>
+    
+            <div id = "chatBox"></div>
+
+            <div id ="chatInput">
+                <input type="text" id = "chatMessage" size = "142"> <button v-on:click = "sendMessage" id = "sendButton">Send Message</button>
+            </div>
+
+            <button class = "controls" v-on:click = "mute">Toggle Mic</button><button class = "controls" v-on:click = "blind">Toggle Video</button>
+        </div>
+    </div>
+    <!-- Peer tutorial from https://www.youtube.com/watch?v=DvlyzDZDEq4 and https://www.toptal.com/webrtc/taming-webrtc-with-peerjs-->
+    <script defer src="https://unpkg.com/peerjs@1.3.1/dist/peerjs.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vue@2/dist/vue.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="https://unpkg.com/vuejs-datepicker"></script>
+    <script>
+        var socket =  null;
+        var peer = null;
+
+        var app = new Vue({
+            el: "#app",
+            data() {
+                return {
+                    username: "",
+                    employee: false,
+                    userStream: MediaStream,
+                    calls: [],
+                    meeting: ""
+                };
+            },
+            methods: {
+                register() {
+                    console.log("Register button clicked");
+                    var username = document.getElementById("usernameRegister").value;
+                    if(username == "") {
+                        alert("No username inputted");
+                        return;
+                    }
+                    var password = document.getElementById("passwordRegister").value;
+                    var employee = 1;
+                    if(document.getElementById("no").checked) {
+                        employee = 0;
+                    }
+                    socket.emit("register_to_server", {
+                        username: username,
+                        password: password,
+                        employee: employee
+                    });
+                },
+                
+                login() {
+                    console.log("Login button clicked");
+                    var username = document.getElementById("usernameLogin").value;
+                    var password = document.getElementById("passwordLogin").value;
+                    socket.emit("login_to_server", {
+                        username: username,
+                        password: password,
+                    });
+                },
+
+                makeAppointment() {
+                    //Grabs all of the information from the HTML elements and creates two date objects with the corresponding time between them
+                    console.log("Create appointment button pressed");
+                    var dateTime = document.getElementById("datePicker").value;
+                    console.log("date time value is: " + dateTime);
+                    if(dateTime != "") {
+                        console.log(dateTime);
+                        //console.log(dateTime);
+                        var startYear = parseInt(dateTime.substring(0,4));
+                        //console.log(startYear);
+                        var startMonth = parseInt(dateTime.substring(5,7));
+                        //console.log(startMonth);
+                        var startDay = dateTime.substring(8,10);
+                        //console.log(startDay);
+                        var startHour = dateTime.substring(11,13);
+                        //console.log(startHour);
+                        var startMin = dateTime.substring(14,16);
+                        //console.log(startMin);
+
+                        var startDate = new Date(startYear, startMonth-1, startDay, startHour, startMin);
+                        var startString = startYear + "-" + startMonth + "-" + startDay + " " + startHour + ":" + startMin + ":00";
+                        console.log(startString);
+
+                        var duration = document.getElementById("timeSelected").value;
+                        var endDate = new Date(startDate.getTime() + duration*60000);
+                        
+                        var endYear = endDate.getFullYear().toString();
+                        var endMonth = (endDate.getMonth()+1).toString();
+                        if(endMonth.length == 1) {
+                            endMonth = "0" + endMonth;
+                        }
+                        var endDay = endDate.getDate().toString();
+                        if(endDay.length == 1) {
+                            endDay = "0" + endDay;
+                        }
+                        var endHour = endDate.getHours().toString();
+                        if(endHour.length == 1) {
+                            endHour = "0" + endHour;
+                        }
+                        var endMin = endDate.getMinutes().toString();
+                        if(endMin.length == 1) {
+                            endMin = "0" + endHour;
+                        }
+                        var endString = endYear + "-" + endMonth + "-" + endDay + " " + endHour + ":" + endMin + ":00";
+                        console.log(endString);
+
+                        socket.emit("appointment_to_server", {
+                            username: this.username,
+                            startDate: startString,
+                            endDate: endString,
+                            duration: duration
+                        });
+                    }
+                    else {
+                        alert("Date must be selected");
+                    }
+                },
+
+                sendMessage() {
+                    var message = document.getElementById("chatMessage").value;
+                    if(!(message == "")) {
+                        socket.emit("message_to_server", {
+                            username: app.username,
+                            message: message,
+                            meeting: app.meeting
+                        });
+                    }
+                },
+
+                logout() {
+                    var username = app.username;
+                    socket.emit("logout_to_server", {
+                        employee: app.employee,
+                        username: username
+                    });
+                    if(!(app.meeting == "")) {
+                        leaveMeeting(app.meeting);
+                    }
+                    document.getElementById("appointments").setAttribute("style", "visibility: hidden");
+                },
+                //Toggling sound and video from: https://stackoverflow.com/questions/22783682/webrtc-add-audio-later-or-disable-microphone-using-peerjs
+                mute() {
+                    app.userStream.getAudioTracks()[0].enabled = !(app.userStream.getAudioTracks()[0].enabled);
+                },
+
+                blind() {
+                    app.userStream.getVideoTracks()[0].enabled = !(app.userStream.getVideoTracks()[0].enabled);
+                }
+            },
+            created: function() {
+                socket = io();
+            }
+        });
+
+        var messageBox = document.getElementById("chatMessage");
+        messageBox.addEventListener("keyup", function(event) {
+            if(event.keyCode == 13) {
+                event.preventDefault();
+                document.getElementById("sendButton").click();
+                messageBox.value = "";
+            }
+        });
+
+        socket.on("register_to_client", function(data) {
+            console.log("Received register server response");
+            if(data["success"]) {
+                console.log("The received data was success");
+                alert("User was registered successfully!");
+            }
+            else {
+                console.log("The received data was false");
+                alert("User may already exist");
+            }
+        });
+
+        socket.on("login_to_client", function(data) {
+            console.log("Received login server response");
+            if(data["success"]) {
+                //If server returns success (when user and pw match) the appointment dashboard is shown
+                console.log("User password matched");
+                app.username = data["username"];
+                app.employee = data["employee"];
+
+                peer = new Peer(data["username"], {
+                    port: 443,
+                    //host: "0.peerjs.com",
+                    secure: true
+                    // host: "/",
+                    // port: "8080",
+                    // secure: true
+                });
+
+                navigator.mediaDevices.getUserMedia({
+                    video: true,
+                    audio: true
+                }).then(stream => {
+                    //userStream = stream;
+                    app.userStream = stream;
+                    document.getElementById("appointmentMaker").setAttribute("style", "display: none;");
+                    document.getElementById("appointments").setAttribute("style", "visibility: visible;")
+                    if(!app.employee) {
+                        document.getElementById("appointmentMaker").setAttribute("style", "display: block;");
+                    }
+                }).then(function() {
+                        peer.on("call", function(call) {
+                            console.log("Answering call");
+                            call.answer(app.userStream);
+                    });
+                }); 
+            }
+            else {
+                alert(data["message"]);
+            }
+        });
+
+        socket.on("appointment_to_client", function(data) {
+            console.log("Received appointment made response");
+            if(data["success"]) {
+                //After putting the appointment into the database all of the information is formatted and displayed on the table on all employees screens and only the user who submitted screen
+                var duration = data["duration"];
+                var startDate = data["startDate"];
+                var endDate = data["endDate"];
+                var client = data["client"];
+                var meetingId = data["meetingId"];
+                console.log("Duration is: " + duration);
+                console.log("Start is: " + startDate);
+                console.log("End is: " + endDate);
+
+                var startYear = parseInt(startDate.substring(0,4));
+                console.log(startYear);
+                var startMonth = parseInt(startDate.substring(5,7));
+                console.log(startMonth);
+                var startDay = startDate.substring(8,10);
+                console.log(startDay);
+                var startHour = parseInt(startDate.substring(11,13));
+                console.log(startHour);
+                var startMin = startDate.substring(14,16);
+                console.log(startMin);
+
+                var pendingTable = document.getElementById("pendingTable");
+                const rowTag = document.createElement("tr");
+                rowTag.setAttribute("id", meetingId)
+                const cellTag1 = document.createElement("td");
+                const bold = document.createElement("b");
+                bold.appendChild(document.createTextNode(startYear + "-" + startMonth + "-" + startDay));
+                cellTag1.appendChild(bold);
+
+                const cellTag2 = document.createElement("td");
+                cellTag2.appendChild(document.createTextNode("Client: " + client));
+
+                const cellTag3 = document.createElement("td");
+                var timeOfDay = "AM";
+                if(startHour > 12) {
+                    startHour = startHour - 12;
+                    timeOfDay = "PM";
+                }
+                if(startHour == 0) {
+                    startHour = 12;
+                    timeOfDay = "AM";
+                }
+                cellTag3.appendChild(document.createTextNode("Begins: " + startHour + ":" + startMin + " " + timeOfDay));
+
+                const cellTag4 = document.createElement("td");
+                cellTag4.appendChild(document.createTextNode("Duration: " + duration + "m"));
+
+                const cellTag5 = document.createElement("td");
+                cellTag5.setAttribute("id", "cell"+meetingId.toString());
+                if(app.employee) {
+                    var acceptButton = document.createElement("button");
+                    acceptButton.setAttribute("onclick", "acceptMeeting(" + meetingId + ")");
+                    //acceptButton.setAttribute("v-on:click", "acceptMeeting");
+                    acceptButton.appendChild(document.createTextNode("Accept"));
+
+                    var rejectButton = document.createElement("button");
+                    rejectButton.setAttribute("onclick", "rejectMeeting(" + meetingId+ ")");
+                    //rejectButton.setAttribute("v-on:click", "rejectMeeting");
+                    rejectButton.appendChild(document.createTextNode("Reject"));
+                    cellTag5.appendChild(acceptButton);
+                    cellTag5.appendChild(rejectButton);
+                }
+                else {
+                    cellTag5.appendChild(document.createTextNode("Status: Pending"));
+                }
+                rowTag.appendChild(cellTag1);
+                rowTag.appendChild(cellTag2);
+                rowTag.appendChild(cellTag3);
+                rowTag.appendChild(cellTag4);
+                rowTag.appendChild(cellTag5);
+                pendingTable.appendChild(rowTag);
+            }
+            else {
+                alert("Can't make duplicate meetings");
+            }
+        });
+
+        socket.on("reject_to_client", function(data) {
+            if(data["success"]) {
+                //When meeting is rejected the meeting is deleted from both screen's tables
+                var meetingId = data["meetingId"];
+                var meetingString = meetingId.toString();
+                console.log("Meeting id received is: " + meetingString);
+                console.log("Received rejection message");
+                var rowToDel = document.getElementById(meetingString);
+                rowToDel.remove();
+            }
+        });
+
+        socket.on("accept_to_client", function(data) {
+            if(data["success"]) {
+                var meetingId = data["meetingId"];
+                var meetingString = meetingId.toString();
+                console.log("Receiver is: " + data["receiver"]);
+                if((data["receiver"] == "client") || (data["receiver"] == "meetingEmployee")) {
+                    //When meeting is accepted the meeting is moved to the upcoming appointments table on both screens 
+                    console.log("Meeting id received is: " + meetingString);
+                    console.log("received accept message");
+                    var cell5 = document.getElementById("cell" + meetingId);
+                    cell5.innerHTML = '';
+                    var joinButton = document.createElement("button");
+                    joinButton.setAttribute("onclick", "joinMeeting(" + meetingId + ")");
+                    joinButton.setAttribute("id", "button" + meetingId);
+                    joinButton.appendChild(document.createTextNode("Join Meeting"));
+                    cell5.appendChild(joinButton);
+                    //cell5.appendChild(document.createTextNode("Status: Accepted"));
+                    var meetingRow = document.getElementById(meetingString);
+                    var upcomingTable = document.getElementById("upcomingTable");
+                    upcomingTable.appendChild(meetingRow);
+                }
+                else {
+                    //On all other employee screens the meeting disappears
+                    document.getElementById(meetingString).remove();
+                }
+            }
+        });
+
+        socket.on("open_meeting_to_client", function(data) {
+            if(data["success"]) {    
+                var time = data["time"];
+                var meetingString = data["meetingId"].toString();
+                
+                if(time == "early") {
+                    console.log("Joined meeting early");
+                    if(data["sender"]) {
+                        alert("Meeting has not started yet. Join at the specified time.");
+                    }
+                }
+                if(time == "on-time") {
+                    console.log("Joined meeting on-time");
+
+                    socket.emit("join_room", {
+                        meeting: meetingString
+                    });
+                    app.meeting = meetingString;
+
+                    if(data["numInRoom"] == 1) {
+                        console.log("You are the first to join the room");
+                        var joinButton = document.getElementById("button" + meetingString);
+                        joinButton.removeAttribute("onclick");
+                        joinButton.setAttribute("onclick", 'leaveMeeting(' + meetingString + ', "noneToRemove")');
+                        joinButton.innerHTML = "";
+                        joinButton.appendChild(document.createTextNode("Leave Meeting"));
+                        document.getElementById("videoInterface").setAttribute("style", "visibility: visible;")
+                        addVideoStream(app.userStream, true, data["self"]);
+                    }
+
+                    else if (data["numInRoom"] == 2) {
+                        console.log("Two are now in the room");
+                        var call = peer.call(data["other"], app.userStream);
+                        if(data["sender"]) {
+                            console.log("You just got here so: adding yourself to you and calling other");
+                            var joinButton = document.getElementById("button" + meetingString);
+                            joinButton.removeAttribute("onclick");
+                            
+                            joinButton.innerHTML = "";
+                            joinButton.appendChild(document.createTextNode("Leave Meeting"));
+                            document.getElementById("videoInterface").setAttribute("style", "visibility: visible;")
+                            addVideoStream(app.userStream, true, data["self"]);
+                            
+                            call.on("stream", function(remoteStream) {
+                                if(!app.calls[call.peer]) {
+                                    console.log("Adding vid stream");
+                                    addVideoStream(remoteStream, false, data["other"]);
+                                    app.calls[call.peer] = call;
+                                    console.log("Calls array is: " + JSON.stringify(app.calls));
+                                    console.log("call.peer is: " + call.peer);
+                                    joinButton.setAttribute("onclick", "leaveMeeting(" + meetingString + ", '" + call.peer + "')");
+                                }
+                            }); 
+                        }
+                        else {
+                            console.log("You were already here so try calling because the other just got here");
+                            call.on("stream", function(remoteStream) {
+                                if(!app.calls[call.peer]) {
+                                    console.log("Adding vid stream");
+                                    addVideoStream(remoteStream, false, data["other"]);
+                                    app.calls[call.peer] = call;
+                                    console.log("Calls array is: " + JSON.stringify(app.calls));
+                                    console.log("call.peer is: " + call.peer);
+                                    //Setting the button to remove the other use from the call when someone joins the room
+                                    var joinButton = document.getElementById("button" + meetingString);
+                                    joinButton.setAttribute("onclick", "leaveMeeting(" + meetingString + ", '" + call.peer + "')");
+                                }
+                            });
+                        }
+                    }
+                }
+                if(time == "late") {
+                    console.log("Joined meeting late");
+                    if(data["sender"]) {
+                        alert("This meeting has already ended");
+                    }
+                    var row = document.getElementById(meetingString);
+                    row.remove();
+                }
+            }
+        });
+
+        socket.on("message_to_client", function(data) {
+            var message = document.createTextNode(data["sender"] + ": " +data["message"]);
+            var messageBox = document.getElementById("chatBox");
+            messageBox.appendChild(message);
+            messageBox.appendChild(document.createElement("br"));
+        });
+
+        socket.on("user_left", function(data) {
+            console.log("Received user left notif");
+            var userToDel = data["userToDel"];
+            var videoRemove = document.getElementById(userToDel);
+            videoRemove.remove();
+            delete app.calls[userToDel];
+        });
+
+        function acceptMeeting(meetingId) {
+            console.log("Accepting meeting");
+            socket.emit("accept_to_server", {
+                meetingId: meetingId,
+                employee: app.username
+            });
+        };
+
+        function rejectMeeting(meetingId) {
+            console.log("Rejecting meeting");
+            socket.emit("reject_to_server", {
+                meetingId: meetingId
+            });
+        };
+
+        function joinMeeting(meetingId, callId) {
+            console.log("Joining meeting");
+            socket.emit("open_meeting_to_server", {
+                meetingId: meetingId,
+                username: app.username
+            });
+        };
+
+        function leaveMeeting(meetingId, call) {
+            if(!(call == "noneToRemove")) {
+                //var index = app.calls.indexOf(call);
+                console.log("Received index is: " + call);
+                console.log("Calls array is: " + JSON.stringify(app.calls));
+                //app.calls.splice(call, 1);
+                delete app.calls[call];
+                console.log("After splice calls array is: " + JSON.stringify(app.calls));
+            }
+            console.log("Leaving meeting");
+            var videoInterface = document.getElementById("videoInterface");
+            videoInterface.setAttribute("style", "visibility: hidden");
+            var videos = document.getElementById("videos");
+            videos.innerHTML = "";
+            var chatBox = document.getElementById("chatBox");
+            chatBox.innerHTML = "";
+
+            var leaveButton = document.getElementById("button" + meetingId);
+            leaveButton.removeAttribute("onclick");
+            leaveButton.setAttribute("onclick", "joinMeeting(" + meetingId + ")");
+            leaveButton.innerHTML = "";
+            leaveButton.appendChild(document.createTextNode("Join Meeting"));
+            socket.emit("leave_room", {
+                meetingId: meetingId,
+                username: app.username
+            });
+        };
+
+        function addVideoStream(stream, muted, id) {
+            const myMedia = document.createElement("video");
+            myMedia.setAttribute("id", id);
+            if(muted) {
+                myMedia.muted = true;
+            }
+            else {
+                myMedia.muted = false;
+            }
+            myMedia.srcObject = stream;//app.userStream;
+            myMedia.addEventListener("loadedmetadata", () => {
+                myMedia.play()
+            });
+            document.getElementById("videos").appendChild(myMedia);
+        };
+
+    </script>
+</body>
+</html>

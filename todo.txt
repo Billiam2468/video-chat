@@ -1,0 +1,8 @@
+In order of priority
+1. Work on video/audio management (server issues are not controlable but try to fix everything else)
+2. Make sure that leaving and rejoining meetings is handled correctly (last priority. can also be part of one above)
+
+Creative Portion:
+Added ability to toggle audio and video for user (adds privacy)
+Also added ability for employee to reject a meeting since that can often happen where conflicts occur
+Added ability to leave meetings prematurely and come back to them as that is a common feature in many apps
